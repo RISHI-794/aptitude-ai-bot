@@ -1,0 +1,5 @@
+google-genai
+pydantic
+python-dotenv
+python-telegram-bot
+psycopg[binary]
