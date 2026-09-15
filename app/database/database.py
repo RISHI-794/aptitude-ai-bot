@@ -1,103 +1,73 @@
 import os
 from datetime import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import psycopg
-from dotenv import load_dotenv
 from psycopg.types.json import Json
+from dotenv import load_dotenv
 
 from app.ai.schemas import Quiz
 
 
-# --------------------------------------------------
-# Configuration
-# --------------------------------------------------
-
 load_dotenv()
+
 
 SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL")
 
 if not SUPABASE_DB_URL:
     raise ValueError(
-        "SUPABASE_DB_URL is missing. "
-        "Please add it to the .env file."
+        "SUPABASE_DB_URL is missing. Please add it to the .env file."
     )
 
 
-# India timezone for daily quiz logic
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
 
-# --------------------------------------------------
-# Database connection
-# --------------------------------------------------
-
 def get_connection():
-    """
-    Create a connection to the Supabase PostgreSQL database.
-    """
-
     return psycopg.connect(SUPABASE_DB_URL)
 
 
-# --------------------------------------------------
-# Database initialization / connection test
-# --------------------------------------------------
-
 def initialize_database():
-    """
-    Verify that the Supabase database is reachable.
-
-    Tables are created in Supabase separately, so this function
-    does not recreate the schema.
-    """
 
     connection = get_connection()
 
     try:
+
         with connection.cursor() as cursor:
+
             cursor.execute("SELECT 1")
             cursor.fetchone()
 
         connection.commit()
 
     finally:
+
         connection.close()
 
 
-# --------------------------------------------------
-# Current date in India
-# --------------------------------------------------
-
 def get_today_india():
-    """
-    Return today's date according to India Standard Time.
-    """
 
     return datetime.now(INDIA_TZ).date()
 
 
-# --------------------------------------------------
-# Quiz sessions
-# --------------------------------------------------
-
 def create_quiz_session(
     category: str,
     topic: str,
-    quiz: Quiz
+    quiz: Quiz,
 ) -> int:
 
     connection = get_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             quiz_date = get_today_india()
 
             cursor.execute(
                 """
-                INSERT INTO quiz_sessions (
+                INSERT INTO quiz_sessions
+                (
                     quiz_date,
                     category,
                     topic,
@@ -111,7 +81,7 @@ def create_quiz_session(
                     category,
                     topic,
                     quiz.title,
-                )
+                ),
             )
 
             session_id = cursor.fetchone()[0]
@@ -121,26 +91,16 @@ def create_quiz_session(
         return int(session_id)
 
     finally:
+
         connection.close()
 
 
 def get_todays_quiz_session():
-    """
-    Return today's quiz session.
-
-    Return format:
-    (
-        id,
-        quiz_date,
-        category,
-        topic,
-        title
-    )
-    """
 
     connection = get_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             today = get_today_india()
@@ -152,13 +112,14 @@ def get_todays_quiz_session():
                     quiz_date,
                     category,
                     topic,
-                    title
+                    title,
+                    sent_at
                 FROM quiz_sessions
                 WHERE quiz_date = %s
                 ORDER BY id DESC
                 LIMIT 1
                 """,
-                (today,)
+                (today,),
             )
 
             row = cursor.fetchone()
@@ -166,23 +127,35 @@ def get_todays_quiz_session():
         return row
 
     finally:
+
         connection.close()
 
 
-# --------------------------------------------------
-# Questions
-# --------------------------------------------------
+def mark_quiz_as_sent(session_id: int):
 
-def save_quiz(
-    quiz: Quiz,
-    session_id: int
-):
-    """
-    Save the questions belonging to a quiz session.
+    connection = get_connection()
 
-    Duplicate questions are detected using the UNIQUE
-    question constraint.
-    """
+    try:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                UPDATE quiz_sessions
+                SET sent_at = NOW()
+                WHERE id = %s
+                """,
+                (session_id,),
+            )
+
+        connection.commit()
+
+    finally:
+
+        connection.close()
+
+
+def save_quiz(quiz: Quiz, session_id: int):
 
     connection = get_connection()
 
@@ -190,6 +163,7 @@ def save_quiz(
     skipped_count = 0
 
     try:
+
         with connection.cursor() as cursor:
 
             for question in quiz.questions:
@@ -200,7 +174,7 @@ def save_quiz(
                     FROM questions
                     WHERE question = %s
                     """,
-                    (question.question,)
+                    (question.question,),
                 )
 
                 existing_question = cursor.fetchone()
@@ -221,14 +195,15 @@ def save_quiz(
                             session_id,
                             question.question_number,
                             existing_question[0],
-                        )
+                        ),
                     )
 
                     continue
 
                 cursor.execute(
                     """
-                    INSERT INTO questions (
+                    INSERT INTO questions
+                    (
                         quiz_session_id,
                         question_number,
                         difficulty,
@@ -239,7 +214,8 @@ def save_quiz(
                         explanation,
                         shortcut
                     )
-                    VALUES (
+                    VALUES
+                    (
                         %s,
                         %s,
                         %s,
@@ -261,7 +237,7 @@ def save_quiz(
                         question.correct_answer,
                         question.explanation,
                         question.shortcut,
-                    )
+                    ),
                 )
 
                 saved_count += 1
@@ -271,20 +247,16 @@ def save_quiz(
         return saved_count, skipped_count
 
     finally:
+
         connection.close()
 
 
 def get_questions_for_session(session_id: int):
-    """
-    Return all questions belonging to a quiz session.
-
-    The tuple order intentionally matches the old SQLite version
-    so the existing Telegram code can continue to work.
-    """
 
     connection = get_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
@@ -303,7 +275,7 @@ def get_questions_for_session(session_id: int):
                 WHERE quiz_session_id = %s
                 ORDER BY question_number
                 """,
-                (session_id,)
+                (session_id,),
             )
 
             rows = cursor.fetchall()
@@ -311,12 +283,9 @@ def get_questions_for_session(session_id: int):
         return rows
 
     finally:
+
         connection.close()
 
-
-# --------------------------------------------------
-# User submissions
-# --------------------------------------------------
 
 def save_submission(
     session_id: int,
@@ -325,20 +294,19 @@ def save_submission(
     display_name: str,
     answers: dict,
     score: int,
-    total_questions: int
+    total_questions: int,
 ):
-    """
-    Save a user's quiz submission.
-    """
 
     connection = get_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
                 """
-                INSERT INTO user_submissions (
+                INSERT INTO user_submissions
+                (
                     quiz_session_id,
                     telegram_user_id,
                     username,
@@ -347,7 +315,8 @@ def save_submission(
                     score,
                     total_questions
                 )
-                VALUES (
+                VALUES
+                (
                     %s,
                     %s,
                     %s,
@@ -359,66 +328,65 @@ def save_submission(
                 """,
                 (
                     session_id,
-                    telegram_user_id,
+                    str(telegram_user_id),
                     username,
                     display_name,
                     Json(answers),
                     score,
                     total_questions,
-                )
+                ),
             )
 
         connection.commit()
 
     finally:
+
         connection.close()
 
 
-# --------------------------------------------------
-# Topic rotation
-# --------------------------------------------------
-
 def save_topic_history(
     category: str,
-    topic: str
+    topic: str,
 ):
-    """
-    Record that a topic was used.
-    """
 
     connection = get_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
                 """
-                INSERT INTO topic_history (
+                INSERT INTO topic_history
+                (
                     category,
                     topic
                 )
-                VALUES (%s, %s)
+                VALUES
+                (
+                    %s,
+                    %s
+                )
                 """,
                 (
                     category,
                     topic,
-                )
+                ),
             )
 
         connection.commit()
 
     finally:
+
         connection.close()
 
 
 def get_recent_topics(limit: int = 10):
-    """
-    Return recently used topics.
-    """
 
     connection = get_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
@@ -430,7 +398,7 @@ def get_recent_topics(limit: int = 10):
                 ORDER BY id DESC
                 LIMIT %s
                 """,
-                (limit,)
+                (limit,),
             )
 
             rows = cursor.fetchall()
@@ -438,16 +406,5 @@ def get_recent_topics(limit: int = 10):
         return rows
 
     finally:
+
         connection.close()
-
-
-# --------------------------------------------------
-# Local test
-# --------------------------------------------------
-
-if __name__ == "__main__":
-
-    initialize_database()
-
-    print("Supabase PostgreSQL connection successful! ✅")
-    print(f"India date: {get_today_india()}")

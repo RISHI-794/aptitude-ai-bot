@@ -5,6 +5,7 @@ from telegram import Bot
 
 from app.ai.generator import generate_quiz
 from app.ai.schemas import Quiz, Question
+
 from app.database.database import (
     initialize_database,
     create_quiz_session,
@@ -12,16 +13,18 @@ from app.database.database import (
     get_todays_quiz_session,
     get_questions_for_session,
     save_topic_history,
+    mark_quiz_as_sent,
 )
+
 from app.telegram.bot import BOT_TOKEN, CHAT_ID
 from app.telegram.formatter import format_quiz_for_telegram
 from app.topic_rotation import get_daily_topic
 
 
 def load_existing_quiz(session):
-    """Load today's already-saved quiz from Supabase."""
 
     session_id = session[0]
+
     rows = get_questions_for_session(session_id)
 
     if len(rows) != 5:
@@ -30,6 +33,7 @@ def load_existing_quiz(session):
     questions = []
 
     for row in rows:
+
         (
             _question_id,
             question_number,
@@ -68,24 +72,36 @@ def load_existing_quiz(session):
 
 
 def create_daily_quiz():
+
     initialize_database()
 
     existing_session = get_todays_quiz_session()
 
     if existing_session:
+
         print("Today's quiz already exists.")
         print(f"Session ID: {existing_session[0]}")
         print(f"Category: {existing_session[2]}")
         print(f"Topic: {existing_session[3]}")
 
+        sent_at = existing_session[5]
+
+        if sent_at:
+            print(f"Already sent at: {sent_at}")
+        else:
+            print("Quiz has NOT been sent yet.")
+
         quiz = load_existing_quiz(existing_session)
 
         if quiz is None:
             print("Today's quiz exists but is incomplete.")
-            return None
+            return None, False
 
         print("Loaded existing quiz from Supabase. ✅")
-        return quiz
+
+        should_send = sent_at is None
+
+        return quiz, should_send
 
     category, topic = get_daily_topic()
 
@@ -117,14 +133,24 @@ def create_daily_quiz():
 
     print("Topic recorded in history. ✅")
 
-    return quiz
+    return quiz, True
 
 
 async def send_daily_quiz():
-    quiz = create_daily_quiz()
+
+    quiz, should_send = create_daily_quiz()
 
     if quiz is None:
+
         print("Could not load or create today's quiz.")
+
+        return
+
+    if not should_send:
+
+        print("Today's quiz has already been sent.")
+        print("No Telegram message will be sent. ✅")
+
         return
 
     message = format_quiz_for_telegram(quiz)
@@ -138,6 +164,18 @@ async def send_daily_quiz():
 
     print("Daily quiz sent to Telegram! ✅")
 
+    # Only mark the quiz as sent AFTER Telegram confirms
+    # that the message was successfully sent.
+
+    session = get_todays_quiz_session()
+
+    if session:
+
+        mark_quiz_as_sent(session[0])
+
+        print("Quiz marked as sent in Supabase. ✅")
+
 
 if __name__ == "__main__":
+
     asyncio.run(send_daily_quiz())
