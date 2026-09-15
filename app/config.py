@@ -10,4 +10,4 @@ if not GEMINI_API_KEY:
         "GEMINI_API_KEY is missing. Please add it to the .env file."
     )
 
-GEMINI_MODEL = "gemini-3.7-flash"
+GEMINI_MODEL = "gemini-3.6-flash"
